@@ -12,37 +12,41 @@ bot.onText(/\/start/, (msg) => {
 bot.on('document', (msg) => {
     const chatId = msg.chat.id;
     const fileId = msg.document.file_id;
+    const mimeType = msg.document.mime_type;
+
+    // Check if the file is a PDF
+    // if (mimeType !== 'application/pdf') {
+    //     bot.sendMessage(chatId, 'Please send a PDF file.');
+    //     return;
+    // }
 
     // Download the file
     bot.downloadFile(fileId, './').then((filePath) => {
-        const file = Bun.file(filePath);
-
-        const newFilePath = './touched-text.txt';
-        const newFile = Bun.file(newFilePath);
-
-        file.text()
-            .then(data => {
-                // Modify the content
-                const modifiedContent = data + '\nThis file has been touched by the bot.';
-
-                // Write the modified content to a new file
-                Bun.write(newFilePath, modifiedContent)
-                    .then(() => bot.sendDocument(chatId, newFilePath))
-                    .catch(error => {
-                        bot.sendMessage(chatId, 'Error sending the file back.');
-                        console.error('Error:', error);
-                    });
-            })
-            .catch(error => {
+        fs.readFile(filePath, 'utf8', (err, data) => {
+            if (err) {
                 bot.sendMessage(chatId, 'Error reading the file.');
-                console.error('Error:', error);
+                return;
+            }
+
+            // Modify the content (e.g., append a line)
+            const modifiedContent = data + '\nThis file has been touched by the bot.';
+
+            // Write the modified content to a new file
+            const newFilePath = './touched-text.txt';
+            fs.writeFile(newFilePath, modifiedContent, (err) => {
+                if (err) {
+                    bot.sendMessage(chatId, 'Error writing the modified file.');
+                    return;
+                }
+
+                // Send the modified file back to the user
+                bot.sendDocument(chatId, newFilePath).then(() => {
+                    // Clean up the files
+                    fs.unlinkSync(filePath);
+                    fs.unlinkSync(newFilePath);
+                });
             });
-
-
-        // Bun delete function is... problematic
-        // It looks like a bug of the runtime itself
-        fs.unlinkSync(filePath);
-        fs.unlinkSync(newFilePath);
+        });
     });
 });
 
