@@ -3,37 +3,36 @@ import fs from 'fs';
 import { readFile } from "node:fs/promises";
 import dotenv from 'dotenv';
 import Replicate from "replicate";
+import { Readable } from 'stream';
+import { ReadableStream } from 'stream/web';
 
 dotenv.config();
 
-const token = process.env.TELEGRAM_TOKEN;
-const bot = new TelegramBot(token, { polling: true });
-
-const replicate_token = process.env.REPLICATE_API_TOKEN;
+const bot = new TelegramBot(
+    process.env.TELEGRAM_TOKEN,
+    { polling: true }
+);
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
-function collectStream(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let result = '';
-
-  return reader.read().then(function processChunk({ done, value }): Promise<string> {
-    if (done) return Promise.resolve(result);
-    result += decoder.decode(value, { stream: true }); // Decode bytes to string
-    return reader.read().then(processChunk); // Chain the next read
-  });
-}
-
 const MAX_LENGTH = 4096;
+let messageId;
+let currentText = '';
 
-function sendTextInChunks(chatId: number, text: string) {
-  for (let i = 0; i < text.length; i += MAX_LENGTH) {
-    const chunk = text.substring(i, i + MAX_LENGTH);
-    bot.sendMessage(chatId, chunk);
-  }
+async function readableStreamToNodeReadable(readableStream) {
+  const reader = readableStream.getReader();
+  return new Readable({
+    async read() {
+      const { done, value } = await reader.read();
+      if (done) {
+        this.push(null); // End the stream
+      } else {
+        this.push(value); // Push the chunk
+      }
+    },
+  });
 }
 
 bot.onText(/\/start/, (msg) => {
@@ -57,9 +56,32 @@ bot.on('document', (msg) => {
                         "cuuupid/markitdown:dbaed480930eebcf09fbfeac1050a58af8600088058b5124a10988d1ff3432fd",
                         { input: { doc: fileInput } }
                     ))
-                    .then(output => {
-                        collectStream(output).then(finalString => {
-                            sendTextInChunks(chatId, finalString);
+                    .then(stream => readableStreamToNodeReadable(stream))
+                    .then(stream => {
+                        bot.sendMessage(chatId, 'Starting stream...').then((sentMessage) => {
+                            messageId = sentMessage.message_id;
+
+                            const decoder = new TextDecoder();
+
+                            stream.on('data', (chunk) => {
+                                const newText = decoder.decode(chunk); // Decode Uint8Array to string
+                                currentText += newText;
+
+                                // Check if the text exceeds the limit
+                                if (currentText.length > 4096) {
+                                    // Send a new message with the overflow text
+                                    bot.sendMessage(chatId, currentText.slice(4096)).then((newMessage) => {
+                                        messageId = newMessage.message_id; // Update message ID
+                                        currentText = currentText.slice(4096); // Reset current text
+                                    });
+                                } else {
+                                    // Update the existing message
+                                    bot.editMessageText(currentText, {
+                                        chat_id: chatId,
+                                        message_id: messageId
+                                    });
+                                }
+                            });
                         });
                     })
                     .then(() => {
