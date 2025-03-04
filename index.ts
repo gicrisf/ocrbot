@@ -17,22 +17,26 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
-const MAX_LENGTH = 4096;
 let messageId;
 let currentText = '';
 
-async function readableStreamToNodeReadable(readableStream) {
-  const reader = readableStream.getReader();
-  return new Readable({
-    async read() {
-      const { done, value } = await reader.read();
-      if (done) {
-        this.push(null); // End the stream
-      } else {
-        this.push(value); // Push the chunk
-      }
-    },
-  });
+async function nodeStreamFromPdf(filePath: string) {
+    // Read the downloaded file into memory
+    const fileInput = await readFile(filePath);
+    // Run the file through a model
+    const stream = await replicate.run(process.env.REPLICATE_MODEL, { input: { doc: fileInput } });
+    // Convert the stream to a Node.js readable stream
+    const reader = stream.getReader();
+    return new Readable({
+        async read() {
+            const { done, value } = await reader.read();
+            if (done) {
+                this.push(null); // End the stream
+            } else {
+                this.push(value); // Push the chunk
+            }
+        },
+    });
 }
 
 bot.onText(/\/start/, (msg) => {
@@ -40,7 +44,7 @@ bot.onText(/\/start/, (msg) => {
     bot.sendMessage(chatId, 'Hello, I am your Telegram bot!');
 });
 
-bot.on('document', (msg) => {
+bot.on('document', async (msg) => {
     const chatId = msg.chat.id;
     const fileId = msg.document.file_id;
     const mimeType = msg.document.mime_type;
@@ -49,50 +53,50 @@ bot.on('document', (msg) => {
     if (mimeType == 'application/pdf') {
         bot.sendMessage(chatId, 'Yay! A PDF file :3');
 
-        bot.downloadFile(fileId, './')
-            .then(filePath => {
-                readFile(filePath)
-                    .then(fileInput => replicate.run(
-                        "cuuupid/markitdown:dbaed480930eebcf09fbfeac1050a58af8600088058b5124a10988d1ff3432fd",
-                        { input: { doc: fileInput } }
-                    ))
-                    .then(stream => readableStreamToNodeReadable(stream))
-                    .then(stream => {
-                        bot.sendMessage(chatId, 'Starting stream...').then((sentMessage) => {
-                            messageId = sentMessage.message_id;
+        try {
+            // Download the file using the provided fileId
+            const filePath = await bot.downloadFile(fileId, './');
+            // Get stream of strings from file
+            const nodeStream = await nodeStreamFromPdf(fileId);
+            // Notify the user that the stream is starting
+            const sentMessage = await bot.sendMessage(chatId, 'Starting stream...');
+            // Store the message ID for later editing
+            let messageId = sentMessage.message_id;
+            // Decode binary chunks to text
+            const decoder = new TextDecoder();
+            // Handle incoming data chunks from the stream
+            nodeStream.on('data', async (chunk) => {
+                // Decode the chunk to text
+                const newText = decoder.decode(chunk);
+                // Append the new text to the accumulated text
+                currentText += newText;
 
-                            const decoder = new TextDecoder();
-
-                            stream.on('data', (chunk) => {
-                                const newText = decoder.decode(chunk); // Decode Uint8Array to string
-                                currentText += newText;
-
-                                // Check if the text exceeds the limit
-                                if (currentText.length > 4096) {
-                                    // Send a new message with the overflow text
-                                    bot.sendMessage(chatId, currentText.slice(4096)).then((newMessage) => {
-                                        messageId = newMessage.message_id; // Update message ID
-                                        currentText = currentText.slice(4096); // Reset current text
-                                    });
-                                } else {
-                                    // Update the existing message
-                                    bot.editMessageText(currentText, {
-                                        chat_id: chatId,
-                                        message_id: messageId
-                                    });
-                                }
-                            });
-                        });
-                    })
-                    .then(() => {
-                        // Clean up
-                        fs.unlinkSync(filePath);
-                    })
-            })
-            .catch(error => {
-                bot.sendMessage(chatId, 'Error in PDF conversion.');
-                console.log(error);
+                // If exceeds the Telegram message limit
+                if (currentText.length > 4096) {
+                    // Send a new message with the overflow text
+                    const newMessage = await bot.sendMessage(chatId, currentText.slice(4096));
+                    // Update the message ID for editing
+                    messageId = newMessage.message_id;
+                    // Keep the remaining text
+                    currentText = currentText.slice(4096);
+                } else {
+                    // Edit the existing message
+                    await bot.editMessageText(currentText, {
+                        chat_id: chatId,
+                        message_id: messageId
+                    });
+                }
             });
+
+            // Wait for the stream to end
+            await new Promise((resolve) => nodeStream.on('end', resolve));
+            // Clean up by deleting the downloaded file
+            fs.unlinkSync(filePath);
+        } catch (error) {
+            await bot.sendMessage(chatId, 'Error in PDF conversion.');
+            console.log(error);
+        }
+
     } else {
         bot.sendMessage(chatId, 'I need a PDF file :c');
     }
