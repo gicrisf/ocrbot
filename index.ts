@@ -41,24 +41,6 @@ bot.onText(/\/start/, (msg) => {
     bot.sendMessage(chatId, 'Hello, I am your Telegram bot!');
 });
 
-// Try with the default PDF
-bot.onText(/\/try/, (msg) => {
-    const chatId = msg.chat.id;
-    replicate.run(
-        "cuuupid/markitdown:dbaed480930eebcf09fbfeac1050a58af8600088058b5124a10988d1ff3432fd",
-        {
-            input: {
-                doc: "https://replicate.delivery/pbxt/M9lE653pyLnXBk7P0VrmymcjqvQyXKsBBUgNkLz3YN2Y9wdw/Tradewinds%2BMarketplace%2BAnnouncement%2BRevision%2B6.pdf"
-            }
-        }
-    ).then((output) => {
-        collectStream(output).then(finalString => {
-            // console.log(finalString);
-            bot.sendMessage(chatId, finalString);
-        });
-    });
-});
-
 bot.on('document', (msg) => {
     const chatId = msg.chat.id;
     const fileId = msg.document.file_id;
@@ -69,50 +51,28 @@ bot.on('document', (msg) => {
         bot.sendMessage(chatId, 'Yay! A PDF file :3');
 
         bot.downloadFile(fileId, './')
-            .then(filePath => readFile(filePath))
-            .then(fileInput => replicate.run(
-                "cuuupid/markitdown:dbaed480930eebcf09fbfeac1050a58af8600088058b5124a10988d1ff3432fd",
-                { input: { doc: fileInput } }
-            ))
-            .then(output => {
-                collectStream(output).then(finalString => {
-                    // console.log(finalString);
-                    sendTextInChunks(chatId, finalString);
-                });
+            .then(filePath => {
+                readFile(filePath)
+                    .then(fileInput => replicate.run(
+                        "cuuupid/markitdown:dbaed480930eebcf09fbfeac1050a58af8600088058b5124a10988d1ff3432fd",
+                        { input: { doc: fileInput } }
+                    ))
+                    .then(output => {
+                        collectStream(output).then(finalString => {
+                            sendTextInChunks(chatId, finalString);
+                        });
+                    })
+                    .then(() => {
+                        // Clean up
+                        fs.unlinkSync(filePath);
+                    })
             })
             .catch(error => {
                 bot.sendMessage(chatId, 'Error in PDF conversion.');
                 console.log(error);
             });
     } else {
-        // Download the file
-        bot.downloadFile(fileId, './').then((filePath) => {
-            fs.readFile(filePath, 'utf8', (err, data) => {
-                if (err) {
-                    bot.sendMessage(chatId, 'Error reading the file.');
-                    return;
-                }
-
-                // Modify the content (e.g., append a line)
-                const modifiedContent = data + '\nThis file has been touched by the bot.';
-
-                // Write the modified content to a new file
-                const newFilePath = './touched-text.txt';
-                fs.writeFile(newFilePath, modifiedContent, (err) => {
-                    if (err) {
-                        bot.sendMessage(chatId, 'Error writing the modified file.');
-                        return;
-                    }
-
-                    // Send the modified file back to the user
-                    bot.sendDocument(chatId, newFilePath).then(() => {
-                        // Clean up the files
-                        fs.unlinkSync(filePath);
-                        fs.unlinkSync(newFilePath);
-                    });
-                });
-            });
-        });
+        bot.sendMessage(chatId, 'I need a PDF file :c');
     }
 });
 
