@@ -150,52 +150,45 @@ bot.on('document', async (msg) => {
     // Check if the file is a PDF
     if (msg.document.mime_type == 'application/pdf') {
         bot.sendMessage(msg.chat.id, 'Yay! A PDF file :3');
-
-        try {
-            // List among the file being processed by the bot
-            actions.newFile(msg);
-            // Download the file using the provided file id
-            const filePath = await bot.downloadFile(msg.document.file_id, './');
-            // Get stream of strings from file
-            // TODO Switch between test and production modes
-            // const nodeStream = await nodeStreamFromPdf(filePath)
-            const nodeStream = await mockNodeStreamFromPdf();
-            // Notify the user that the stream is starting
-            const sentMessage = await bot.sendMessage(msg.chat.id, 'Starting stream...');
-            // Store the message ID for later editing
-            actions.setMessage(sentMessage);
-            // Decode binary chunks to text
-            const decoder = new TextDecoder();
-            // Handle incoming data chunks from the stream
-            nodeStream.on('data', async (chunk) => {
-                // Decode the chunk to text
-                const newText = decoder.decode(chunk);
-                actions.appendBuffer(newText);
-                // If exceeds the Telegram message limit
-                if (state.currentText.length > 4096) {
-                    // Send a new message with the overflow text
-                    const newMessage = await bot.sendMessage(msg.chat.id, state.currentText.slice(4096));
-                    // Update the message ID for editing
-                    actions.setMessage(newMessage);
-                    actions.setBuffer(state.currentText.slice(4096));
-                } else {
-                    try {
-                        await bot.editMessageText(state.currentText, { chat_id: msg.chat.id, message_id: state.messageId });
-                    } catch (error) {
-                        logger.error(error, 'Failed to edit message');
-                    }
+        // List among the file being processed by the bot
+        actions.newFile(msg);
+        // Download the file using the provided file id
+        const filePath = await bot.downloadFile(msg.document.file_id, './');
+        // Get stream of strings from file
+        // TODO Switch between test and production modes
+        // const nodeStream = await nodeStreamFromPdf(filePath)
+        const nodeStream = await mockNodeStreamFromPdf();
+        // Notify the user that the stream is starting
+        const sentMessage = await bot.sendMessage(msg.chat.id, 'Starting stream...');
+        // Store the message ID for later editing
+        actions.setMessage(sentMessage);
+        // Decode binary chunks to text
+        const decoder = new TextDecoder();
+        // Handle incoming data chunks from the stream
+        nodeStream.on('data', async (chunk) => {
+            // Decode the chunk to text
+            const newText = decoder.decode(chunk);
+            actions.appendBuffer(newText);
+            // If exceeds the Telegram message limit
+            if (state.currentText.length > 4096) {
+                // Send a new message with the overflow text
+                const newMessage = await bot.sendMessage(msg.chat.id, state.currentText.slice(4096));
+                // Update the message ID for editing
+                actions.setMessage(newMessage);
+                actions.setBuffer(state.currentText.slice(4096));
+            } else {
+                try {
+                    await bot.editMessageText(state.currentText, { chat_id: msg.chat.id, message_id: state.messageId });
+                } catch (error) {
+                    logger.error(error, 'Failed to edit message');
                 }
-            });
+            }
+        });
 
-            // Wait for the stream to end
-            await new Promise((resolve) => nodeStream.on('end', resolve));
-            // Clean up by deleting the downloaded file
-            fs.unlinkSync(filePath);
-        } catch (error) {
-            await bot.sendMessage(msg.chat.id, 'Error in PDF conversion.');
-            console.log(error);
-        }
-
+        // Wait for the stream to end
+        await new Promise((resolve) => nodeStream.on('end', resolve));
+        // Clean up by deleting the downloaded file
+        fs.unlinkSync(filePath);
     } else {
         bot.sendMessage(msg.chat.id, 'I need a PDF file :c');
     }
